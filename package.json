@@ -1,0 +1,53 @@
+{
+  "name": "low-context",
+  "version": "0.1.0",
+  "description": "Low Context — a retrieval-first AI coding CLI. Remember where things are, retrieve what matters, verify the source, use the minimum useful context.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=18.17.0"
+  },
+  "bin": {
+    "low-context": "./bin/low-context.js",
+    "lc": "./bin/low-context.js"
+  },
+  "main": "./dist/src/index.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/amazingcli/Low-Context-Cli.git"
+  },
+  "homepage": "https://github.com/amazingcli/Low-Context-Cli#readme",
+  "bugs": {
+    "url": "https://github.com/amazingcli/Low-Context-Cli/issues"
+  },
+  "files": [
+    "bin",
+    "dist",
+    "docs",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepare": "npm run build",
+    "prepublishOnly": "npm run typecheck && npm test",
+    "clean": "node ./scripts/clean.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test dist/tests/",
+    "test:only": "node --test dist/tests/",
+    "bench": "npm run build && node dist/bench/run.js",
+    "dev": "npm run build && node --enable-source-maps ./bin/low-context.js"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.10",
+    "typescript": "^5.5.3"
+  },
+  "keywords": [
+    "ai",
+    "cli",
+    "agent",
+    "retrieval",
+    "memory",
+    "rag",
+    "coding-agent"
+  ]
+}
