@@ -49,7 +49,7 @@ Requires **Node.js ≥ 18.17**. There are **no runtime dependencies** — Low Co
 installs and runs offline.
 
 ```bash
-npm install -g github.com/amazingcli/Low-Context-Cli
+npm install -g github:amazingcli/Low-Context-Cli
 ```
 
 or from the npm registry once published:

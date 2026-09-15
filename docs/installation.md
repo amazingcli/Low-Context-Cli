@@ -12,6 +12,14 @@ There are **no runtime dependencies**. `typescript` and `@types/node` are dev
 dependencies only, so an installed copy runs offline and cannot break because a
 transitive package changed.
 
+## Install from GitHub (no npm account needed)
+
+```bash
+npm install -g github:amazingcli/Low-Context-Cli
+```
+
+npm clones the repository and runs the build automatically (`prepare` script).
+
 ## Install from source
 
 ```bash
