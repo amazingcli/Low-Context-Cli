@@ -28,7 +28,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "prepare": "npm run build",
+    "prepare": "node -e \"require('fs').existsSync('dist/src/cli/index.js')||process.exit(1)\" || npx --no-install tsc -p tsconfig.json",
     "prepublishOnly": "npm run typecheck && npm test",
     "clean": "node ./scripts/clean.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",

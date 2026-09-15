@@ -1,5 +1,4 @@
 node_modules/
-dist/
 *.tsbuildinfo
 .low-context/
 .DS_Store
