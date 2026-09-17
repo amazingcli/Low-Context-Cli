@@ -23,6 +23,7 @@
 import { stdin, stdout } from 'node:process';
 import { createInterface } from 'node:readline/promises';
 import { filterCommands, renderMenuLines, type MenuColors, type SlashCommandSpec } from './slash-menu.js';
+import { visibleWidth } from './ui.js';
 
 export interface ReadLineOptions {
   /** Prompt text, already coloured by the caller. */
@@ -45,10 +46,7 @@ export interface ReadLineResult {
 const ESC = '\u001b[';
 
 /** Strip ANSI escapes so width maths uses visible characters. */
-export function visibleLength(text: string): number {
-  // eslint-disable-next-line no-control-regex
-  return text.replace(/\u001b\[[0-9;]*[A-Za-z]/g, '').length;
-}
+export const visibleLength = visibleWidth;
 
 /** Split a raw stdin chunk into logical keys. */
 export function parseKeys(input: string): string[] {

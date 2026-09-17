@@ -14,7 +14,19 @@
  */
 import { createInterface } from 'node:readline/promises';
 import { stdin, stdout, stderr } from 'node:process';
-import { formatBytes, formatCount } from '../core/util.js';
+import { formatBytes, formatCount, truncate } from '../core/util.js';
+
+/**
+ * Width of a string as the terminal sees it: ANSI escapes are zero-width.
+ * Every framed box, padded column and status line depends on this, so it lives
+ * here next to the colour code that produces those escapes.
+ */
+// eslint-disable-next-line no-control-regex
+const ANSI = /\u001b\[[0-9;]*[A-Za-z]/g;
+
+export function visibleWidth(text: string): number {
+  return text.replace(ANSI, '').length;
+}
 
 export type ColorMode = 'auto' | 'always' | 'never';
 export type ResponseMode = 'normal' | 'verbose' | 'quiet' | 'debug';
@@ -145,6 +157,57 @@ export class Ui {
     this.out(this.dim('─'.repeat(Math.min(60, Math.max(12, text.length + 4)))));
   }
 
+  /** A full-width hairline, used to close a turn or separate sections. */
+  divider(indent = 2, char = '─'): void {
+    const width = Math.max(20, (stdout.columns ?? 80) - indent - 2);
+    this.out(`${' '.repeat(indent)}${this.dim(char.repeat(width))}`);
+  }
+
+  /**
+   * A titled box of label/value rows.
+   *
+   * Values are passed *plain* and truncated to fit, because padding a string
+   * that contains colour codes is how terminal UIs end up ragged. Colours are
+   * applied by this method, after the width maths.
+   */
+  box(title: string, rows: readonly (readonly [string, string])[], options: { labelWidth?: number; maxWidth?: number; indent?: number } = {}): void {
+    const indent = ' '.repeat(options.indent ?? 0);
+    const labelWidth = options.labelWidth ?? Math.max(0, ...rows.map(([label]) => label.length));
+    const maxWidth = options.maxWidth ?? Math.max(44, (stdout.columns ?? 80) - (options.indent ?? 0) - 2);
+    const valueWidth = Math.max(10, maxWidth - labelWidth - 5);
+    const prepared = rows.map(([label, value]) => [label.padEnd(labelWidth), truncate(value, valueWidth, '…')] as const);
+    // +1 so the widest row keeps a space before the closing border.
+    const inner = Math.max(
+      title.length + 4,
+      ...prepared.map(([, value]) => labelWidth + 3 + visibleWidth(value)),
+    );
+    const rule = '─'.repeat(Math.max(0, inner - title.length - 3));
+    this.out(`${indent}${this.dim(`╭─ ${this.boldNoReset(title)} ${rule}╮`)}`);
+    for (const [label, value] of prepared) {
+      const pad = ' '.repeat(Math.max(0, inner - labelWidth - 2 - visibleWidth(value)));
+      this.out(`${indent}${this.dim('│')} ${this.dim(label)}  ${value}${pad}${this.dim('│')}`);
+    }
+    this.out(`${indent}${this.dim(`╰${'─'.repeat(inner + 1)}╯`)}`);
+  }
+
+  /** Bold text that does not reset the surrounding colour (used inside a line). */
+  private boldNoReset(text: string): string {
+    return this.enabled ? `${CODES.bold}${text}${CODES.reset}${CODES.dim}` : text;
+  }
+
+  /**
+   * Attention block. Errors and warnings carry a `fix` line when the caller has
+   * one, because "what do I type next" is the only useful part of a failure
+   * (§45, §90).
+   */
+  alert(kind: 'error' | 'warn' | 'info', message: string, lines: readonly string[] = []): void {
+    const marker = kind === 'error' ? this.color('red', '✖') : kind === 'warn' ? this.color('yellow', '!') : this.color('cyan', '·');
+    this.stopSpinner();
+    this.clearStreaming();
+    stderr.write(`${marker} ${kind === 'info' ? message : this.color(kind === 'error' ? 'red' : 'yellow', message)}\n`);
+    for (const line of lines) stderr.write(`${this.dim(`  ${line}`)}\n`);
+  }
+
   keyValue(pairs: readonly [string, string][], indent = '  '): void {
     const width = Math.max(...pairs.map(([key]) => key.length), 0);
     for (const [key, value] of pairs) this.out(`${indent}${this.dim(key.padEnd(width))}  ${value}`);
@@ -206,6 +269,17 @@ export class Ui {
       this.spinnerTimer = undefined;
       stdout.write('\r\u001b[K');
     }
+  }
+
+  /** Tool activity line: `⏺ tool args` (§28). */
+  toolLine(name: string, detail: string, icon = '⏺'): void {
+    this.out(`  ${this.color('magenta', icon)} ${this.bold(name)}${detail === '' ? '' : `  ${this.dim(detail)}`}`);
+  }
+
+  /** Result line under a tool call, the way Claude Code nests output. */
+  toolResultLine(ok: boolean, text: string): void {
+    const badge = ok ? this.color('green', '✓') : this.color('red', '✗');
+    this.out(`    ${this.dim('⎿')} ${badge} ${text}`);
   }
 
   /** Ask a yes/no question. Non-interactive streams default to "no". */

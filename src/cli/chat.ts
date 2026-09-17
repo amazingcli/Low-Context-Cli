@@ -82,7 +82,7 @@ export async function runAgentTurn(ctx: CommandContext, request: string, options
     embedder: await safeEmbedder(ctx),
   });
 
-  ctx.ui.startSpinner('retrieving...');
+  ctx.ui.startSpinner('thinking…');
   let streamed = false;
   agent.setUi({
     ...ui,
@@ -95,23 +95,30 @@ export async function runAgentTurn(ctx: CommandContext, request: string, options
     },
   });
 
+  const started = Date.now();
   try {
     const result = await agent.run(request);
     ctx.ui.stopSpinner();
     if (streamed) ctx.ui.endStream();
     else ctx.ui.result(result.text);
-    printTurnFooter(
-      ctx,
-      result.usage,
-      result.contextReport ? renderBudgetLine(result.contextReport) : undefined,
-      result.toolCalls,
-      options.explain === true ? result.trace : undefined,
-    );
+    printTurnSummary(ctx, {
+      elapsedMs: Date.now() - started,
+      turns: result.turns,
+      toolCalls: result.toolCalls,
+      tokens: result.usage.reduce((sum, usage) => sum + usage.input_tokens + usage.output_tokens, 0),
+      used: result.contextReport?.used_tokens ?? 0,
+      usable: result.contextReport?.usable_tokens ?? 1,
+      model: `${model.provider}/${model.id}`,
+      ...(result.contextReport !== undefined && (options.explain === true || ctx.ui.debug)
+        ? { budget: renderBudgetLine(result.contextReport) }
+        : {}),
+    });
+    printTurnFooter(ctx, result.usage, undefined, result.toolCalls, options.explain === true ? result.trace : undefined);
     await workspace.flush();
     return 0;
   } catch (error) {
     ctx.ui.stopSpinner();
-    ctx.ui.error(describeError(error));
+    printError(ctx, error);
     return 1;
   }
 }
@@ -129,16 +136,19 @@ function buildAgentUi(ctx: CommandContext, options: { explain: boolean }): Agent
     note: (message) => ui.note(message),
     toolCall: (call, preview) => {
       ui.stopSpinner();
-      const args = Object.keys(call.arguments).length === 0 ? '' : ` ${truncate(inlineArgs(call.arguments), 88)}`;
-      ui.out(`  ${ui.color('magenta', '⏺')} ${ui.bold(call.name)}${ui.dim(args)}`);
+      const detail = Object.keys(call.arguments).length === 0 ? '' : truncate(inlineArgs(call.arguments), 86);
+      ui.toolLine(call.name, detail);
       if (ui.debug && preview) ui.out(ui.dim(`      policy: ${preview}`));
     },
     toolResult: (result: ToolResult) => {
-      const badge = result.ok ? ui.color('green', '✓') : ui.color('red', '✗');
-      const files = result.affected_files && result.affected_files.length > 0 ? ` ${ui.dim(result.affected_files.slice(0, 3).join(', '))}` : '';
-      const size = result.truncated ? ` ${ui.dim(`(full output: ${formatBytes(result.bytes)})`)}` : '';
-      ui.out(`    ${badge} ${ui.dim(`${result.duration_ms} ms`)}${files}${size}`);
-      if (!result.ok && result.error && ui.verbose) ui.out(ui.dim(`      ${truncate(result.error, 160)}`));
+      const summary = truncate(result.summary.replace(/\s+/g, ' ').trim(), 96);
+      const files = result.affected_files && result.affected_files.length > 0 ? `  ${ui.dim(result.affected_files.slice(0, 3).join(', '))}` : '';
+      const size = result.truncated ? `  ${ui.dim(`full output: ${formatBytes(result.bytes)}`)}` : '';
+      ui.toolResultLine(result.ok, `${summary} ${ui.dim(`· ${result.duration_ms} ms`)}${files}${size}`);
+      if (!result.ok && result.error && ui.verbose) ui.out(ui.dim(`        ${truncate(result.error, 150)}`));
+      // The model is thinking again after the tool returned; say so, or the
+      // session looks frozen between calls.
+      ui.startSpinner('thinking…');
     },
     retrieval: (trace) => {
       if (!options.explain && !ui.debug) return;
@@ -182,10 +192,59 @@ function inlineArgs(args: Record<string, unknown>): string {
   return parts.join(' ');
 }
 
-function renderContextBar(used: number, usable: number, width = 20): string {
+function renderContextBar(used: number, usable: number, width = 12): string {
   const ratio = usable <= 0 ? 0 : Math.min(1, used / usable);
   const filled = Math.round(ratio * width);
   return `[${'█'.repeat(filled)}${'·'.repeat(Math.max(0, width - filled))}]`;
+}
+
+/**
+ * The line that closes a turn: what happened, how long it took, what it cost
+ * and how full the window is. It replaces the old five-fact sentence with
+ * scannable metadata, which is what makes a long session readable (§28).
+ */
+function printTurnSummary(
+  ctx: CommandContext,
+  info: {
+    elapsedMs: number;
+    turns: number;
+    toolCalls: number;
+    tokens: number;
+    used: number;
+    usable: number;
+    model: string;
+    budget?: string;
+  },
+): void {
+  const { ui } = ctx;
+  if (ui.quiet) return;
+  const seconds = (info.elapsedMs / 1000).toFixed(1);
+  const percent = info.usable <= 0 ? 0 : Math.round((info.used / info.usable) * 100);
+  const parts = [
+    `${seconds}s`,
+    info.toolCalls === 1 ? '1 tool' : `${info.toolCalls} tools`,
+    `~${formatTokens(info.tokens)} tokens`,
+    `ctx ${renderContextBar(info.used, info.usable)} ${percent}%`,
+    info.model,
+  ];
+  ui.out('');
+  ui.out(`  ${ui.dim(parts.join('  ·  '))}`);
+  if (info.budget !== undefined) ui.out(`  ${ui.dim(info.budget)}`);
+}
+
+/**
+ * Render a failure with its fix on its own line. `describeError` merges the two
+ * for logs; a terminal reads better when the remedy is separated.
+ */
+function printError(ctx: CommandContext, error: unknown): void {
+  const message = error instanceof Error ? error.message : String(error);
+  const fix = (error as { fix?: unknown }).fix;
+  const code = (error as { code?: unknown }).code;
+  const heading = typeof code === 'string' ? `${message}` : message;
+  ctx.ui.alert('error', heading, [
+    ...(typeof fix === 'string' ? [`fix: ${fix}`] : []),
+    ...(typeof code === 'string' ? [`code: ${code}`] : []),
+  ]);
 }
 
 async function confirmToolUse(ctx: CommandContext, request: PermissionRequest): Promise<boolean> {
@@ -305,7 +364,8 @@ export async function runInteractive(ctx: CommandContext & { resumeSessionId?: s
     ui.out(renderTaskState(runtime.taskState));
   }
   ui.out('');
-  ui.out(ui.dim('Type a request. Type / for the command menu, /help for the full list, /exit to leave.'));
+  ui.out(`  ${ui.dim('/ commands   ·   Ctrl-C cancels   ·   /exit ends the session   ·   /help for everything')}`);
+  ui.out('');
 
   const history: string[] = [];
   const totals = { input: 0, output: 0, turns: 0, tools: 0, estimated: false };
@@ -317,7 +377,7 @@ export async function runInteractive(ctx: CommandContext & { resumeSessionId?: s
       cyan: (text) => ui.color('cyan', text),
     };
     const input = await readLine({
-      prompt: ui.color('cyan', `${ui.bold(workspace.project.name)} ${ui.dim('›')} `),
+      prompt: `${ui.color('cyan', '❯')} `,
       commands: SLASH_COMMANDS,
       colors,
       history,
@@ -338,7 +398,7 @@ export async function runInteractive(ctx: CommandContext & { resumeSessionId?: s
       continue;
     }
 
-    if (!runtime.bypass) ui.startSpinner('retrieving...');
+    if (!runtime.bypass) ui.startSpinner('thinking…');
     let streamed = false;
     const turnUi = buildAgentUi(ctx, { explain: false });
     runtime.agent.setUi({
@@ -372,18 +432,20 @@ export async function runInteractive(ctx: CommandContext & { resumeSessionId?: s
       totals.turns += result.turns;
       totals.tools += result.toolCalls;
 
-      const elapsed = ((Date.now() - started) / 1000).toFixed(1);
-      const tokens = result.usage.reduce((sum, u) => sum + u.input_tokens + u.output_tokens, 0);
-      ui.out(
-        ui.dim(
-          `  — ${elapsed}s · ${result.turns} turn(s) · ${result.toolCalls} tool call(s) · ~${formatTokens(tokens)} tokens · context ${renderContextBar(result.contextReport?.used_tokens ?? 0, result.contextReport?.usable_tokens ?? 1)}`,
-        ),
-      );
+      printTurnSummary(ctx, {
+        elapsedMs: Date.now() - started,
+        turns: result.turns,
+        toolCalls: result.toolCalls,
+        tokens: result.usage.reduce((sum, u) => sum + u.input_tokens + u.output_tokens, 0),
+        used: result.contextReport?.used_tokens ?? 0,
+        usable: result.contextReport?.usable_tokens ?? 1,
+        model: `${runtime.model.provider}/${runtime.model.id}`,
+      });
       if (result.stoppedEarly) ui.note('retrieval stopped early: enough verified evidence was found');
     } catch (error) {
       ui.stopSpinner();
-      ui.error(describeError(error));
-      ui.out(ui.dim('  The session is still alive. Try again, or /model to switch models.'));
+      printError(ctx, error);
+      ui.out(ui.dim('  the session is still alive — try again, or /model to switch models'));
     }
     await workspace.flush();
   }
@@ -395,7 +457,9 @@ export async function runInteractive(ctx: CommandContext & { resumeSessionId?: s
   await workspace.flush();
 
   ui.out('');
-  ui.info(`Session ${session.id} saved. Resume with \`lc sessions resume ${session.id}\`.`);
+  ui.divider();
+  ui.out(`  ${ui.color('cyan', '✦')} ${ui.dim('session saved')}  ${ui.dim('·')}  ${ui.dim(`resume with  lc sessions resume ${session.id}`)}`);
+  ui.out('');
   return 0;
 }
 
@@ -748,7 +812,7 @@ async function switchModel(ctx: CommandContext, runtime: SessionRuntime, argumen
     await runtime.workspace.stores.sessions.update(runtime.session.id, { provider: entry.provider, model: entry.model.id });
     ui.success(`Switched to ${entry.provider}/${entry.model.id} (${formatTokens(entry.model.context_limit)} context).`);
   } catch (error) {
-    ui.error(`Could not switch model: ${describeError(error)}`);
+    ui.alert('error', `Could not switch model: ${describeError(error)}`);
   }
   return {};
 }
@@ -907,10 +971,17 @@ async function projectCounts(workspace: Workspace): Promise<{ files: number; mem
   return { files: files.length, memory };
 }
 
+/** Replace the home prefix with `~`, which is what a person expects to read. */
+function shortPath(path: string): string {
+  const home = process.env.HOME;
+  if (home && path.startsWith(home)) return `~${path.slice(home.length)}`;
+  return path;
+}
+
 /**
  * The session header. It is the first thing a user sees, so it states exactly
  * what the agent currently knows: which model, which project, what the index
- * and memory contain, and whether prompts are bypassed.
+ * and memory contain, and how much freedom it has to act.
  */
 function printBanner(
   ctx: CommandContext,
@@ -920,30 +991,22 @@ function printBanner(
   counts: { files: number; memory: number },
 ): void {
   const { ui } = ctx;
-  const inner = 66;
-  const labelWidth = 13;
-  const valueWidth = inner - labelWidth - 1;
-  const title = `Low Context ${VERSION}`;
-
-  const modeNote =
-    ctx.config.permissions.mode === 'safe' ? 'read-only' : ctx.config.permissions.mode === 'trusted' ? 'runs without asking' : 'confirms writes and commands';
-
-  // Plain values only: padding is computed on visible length, so no ANSI here.
-  const rows: [string, string][] = [
-    ['model', `${model.provider}/${model.id} · ${formatTokens(model.context_limit)} window`],
-    ['project', `${workspace.project.name} · ${workspace.root}`],
-    ['retrieval', `${ctx.config.context.strategy} · ${counts.files} files indexed · ${counts.memory} memories`],
-    ['permissions', `${ctx.config.permissions.mode} · ${modeNote}`],
-    ['session', sessionId],
-    ['hint', 'type / for the command menu'],
-  ];
+  const mode = ctx.config.permissions.mode;
+  const modeNote = mode === 'safe' ? 'read-only' : mode === 'trusted' ? 'runs without asking' : 'confirms writes and commands';
 
   ui.out('');
-  ui.out(`╭─ ${title} ${'─'.repeat(Math.max(0, inner - title.length - 4))}╮`);
-  for (const [label, raw] of rows) {
-    const value = truncate(raw, valueWidth);
-    const pad = ' '.repeat(Math.max(0, valueWidth - value.length));
-    ui.out(`${ui.dim('│')} ${ui.dim(label.padEnd(labelWidth))}${label === 'hint' ? ui.dim(value) : value}${pad}${ui.dim('│')}`);
-  }
-  ui.out(`╰${'─'.repeat(inner)}╯`);
+  ui.out(`  ${ui.color('cyan', '✦')} ${ui.bold(`Low Context ${VERSION}`)}  ${ui.dim('retrieval-first coding agent')}`);
+  ui.out('');
+  ui.box(
+    'session',
+    [
+      ['model', `${model.provider}/${model.id}  ·  ${formatTokens(model.context_limit)} window`],
+      ['project', `${workspace.project.name}  ·  ${shortPath(workspace.root)}`],
+      ['index', `${counts.files} files indexed  ·  ${counts.memory} memories`],
+      ['retrieval', `${ctx.config.context.strategy} strategy  ·  ${ctx.config.embedding.enabled ? 'embeddings on' : 'keyword + symbol search'}`],
+      ['permissions', `${mode}  ·  ${modeNote}`],
+      ['session', sessionId],
+    ],
+    { labelWidth: 11, indent: 2 },
+  );
 }

@@ -23,12 +23,10 @@
 import { stdin, stdout } from 'node:process';
 import { createInterface } from 'node:readline/promises';
 import { filterCommands, renderMenuLines } from './slash-menu.js';
+import { visibleWidth } from './ui.js';
 const ESC = '\u001b[';
 /** Strip ANSI escapes so width maths uses visible characters. */
-export function visibleLength(text) {
-    // eslint-disable-next-line no-control-regex
-    return text.replace(/\u001b\[[0-9;]*[A-Za-z]/g, '').length;
-}
+export const visibleLength = visibleWidth;
 /** Split a raw stdin chunk into logical keys. */
 export function parseKeys(input) {
     const keys = [];

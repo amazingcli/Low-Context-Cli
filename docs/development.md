@@ -1,5 +1,32 @@
 # Development
 
+## Terminal UI conventions
+
+The interface is built from a few primitives in `src/cli/ui.ts`, so every
+surface stays consistent and none of them re-implement width maths (which is how
+boxes end up ragged):
+
+| Primitive | Use |
+| --- | --- |
+| `visibleWidth(text)` | the only length function for layout — ANSI codes are zero-width |
+| `box(title, rows)` | label/value panels (the session header, summaries) |
+| `divider()` | closes a turn, full terminal width |
+| `toolLine` / `toolResultLine` | `⏺ tool  args` and `⎿ ✓ result`, nested the way a reader scans |
+| `alert(kind, message, fixes)` | errors and warnings, with the fix on its own dim line |
+| `heading` / `table` / `keyValue` | output of the non-interactive commands |
+
+Rules that keep it readable:
+
+- **values are passed plain** to `box`; the primitive colours and pads them, so
+  no caller ever pads a coloured string;
+- **one line of metadata per turn** (`2.4s · 4 tools · ~1.8k tokens · ctx [██··] 18% · model`)
+  instead of prose, and detail only under `--verbose` / `--debug`;
+- the interactive input line is `prompt.ts`, not readline, because the slash menu
+  needs the region under the cursor; key handling is unit-tested through
+  `parseKeys` and `filterCommands`;
+- anything that draws must degrade to plain text: no colour when stdout is not a
+  TTY, and raw mode is only entered for real terminals.
+
 ## Setup
 
 ```bash
