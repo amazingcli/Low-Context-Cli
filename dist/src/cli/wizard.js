@@ -324,7 +324,12 @@ async function fetchModels(ui, preset, settings) {
             models: [],
         }, key === undefined ? {} : { apiKeyOverride: key });
         const models = await withTimeout(provider.listModels(), 15_000);
-        return models.map((model) => ({ id: model.id, label: model.label, context_limit: model.context_limit }));
+        return models.map((model) => ({
+            id: model.id,
+            label: model.label,
+            context_limit: model.context_limit,
+            capabilities: { tool_calling: model.capabilities.tool_calling },
+        }));
     }
     catch (error) {
         ui.warn(`Could not fetch the model list: ${describeError(error)}`);
@@ -357,7 +362,12 @@ function mergeModels(preset, chosen) {
         if (seen.has(model.id))
             return;
         seen.add(model.id);
-        out.push({ id: model.id, ...(model.label === undefined ? {} : { label: model.label }), ...(model.context_limit === undefined ? {} : { context_limit: model.context_limit }) });
+        out.push({
+            id: model.id,
+            ...(model.label === undefined ? {} : { label: model.label }),
+            ...(model.context_limit === undefined ? {} : { context_limit: model.context_limit }),
+            ...(model.capabilities === undefined ? {} : { capabilities: model.capabilities }),
+        });
     };
     push(chosen);
     for (const model of preset.models)

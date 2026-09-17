@@ -118,8 +118,64 @@ export class ProviderHttp {
   }
 }
 
+/**
+ * Does this provider response mean "this model cannot call tools"?
+ *
+ * Gateways reject the whole request instead of ignoring the `tools` field, and
+ * they all phrase it differently: OpenRouter answers `404 No endpoints found
+ * that support tool use`, others say the model "does not support function
+ * calling". Free and small models are the common case, so this is worth
+ * recognising rather than surfacing as an opaque HTTP error.
+ */
+export function isToolCallingUnsupported(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    /no endpoints? found that support tool/i.test(message) ||
+    /(does not|doesn't|not) support (tool|function) (use|calling)/i.test(message) ||
+    /(tool|function) calling is not supported/i.test(message) ||
+    /tools? (are|is) not supported/i.test(message) ||
+    /support tool use/i.test(message)
+  );
+}
+
+/** Did the provider reject the request because it does not fit the window? */
+export function isContextOverflow(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    /maximum context length/i.test(message) ||
+    /context[_ ]length[_ ]exceeded/i.test(message) ||
+    /(reduce|shorten) the length/i.test(message) ||
+    /too many tokens/i.test(message) ||
+    /exceeds? the (maximum )?(model'?s )?context/i.test(message)
+  );
+}
+
+/** Pull the model's real window out of an overflow error, when it states one. */
+export function parseContextLimit(error: unknown): number | undefined {
+  const message = error instanceof Error ? error.message : String(error);
+  const patterns = [
+    /maximum context length is (\d+)/i,
+    /context length (?:of|is) (\d+)/i,
+    /max(?:imum)? (?:context|tokens?)[^0-9]{0,24}(\d{3,})/i,
+    /limit of (\d+) tokens/i,
+  ];
+  for (const pattern of patterns) {
+    const match = pattern.exec(message);
+    if (match?.[1] !== undefined) {
+      const value = Number(match[1]);
+      if (Number.isFinite(value) && value > 0) return value;
+    }
+  }
+  return undefined;
+}
+
 export function mapHttpError(status: number, detail: string): LowContextError {
   const message = detail ? truncateForError(detail) : `HTTP ${status}`;
+  if (isToolCallingUnsupported(detail)) {
+    return new LowContextError('PROVIDER_UNSUPPORTED', `The model does not support tool calling (HTTP ${status}: ${message})`, {
+      fix: 'Answering without tools. Pick a model that supports tool calling (`/models`) to edit files and run commands.',
+    });
+  }
   if (status === 401 || status === 403) {
     return new LowContextError('PROVIDER_AUTH', `The provider rejected the API key (HTTP ${status}: ${message})`, {
       fix: 'Check your API key with `low-context provider list` / set the API key environment variable.',

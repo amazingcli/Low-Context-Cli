@@ -34,6 +34,11 @@ interface PresetModel {
   id: string;
   label: string;
   context_limit?: number;
+  /**
+   * Kept when a model is fetched from the provider, so a model that cannot
+   * call tools is stored as such and never has the tool catalogue sent to it.
+   */
+  capabilities?: ModelConfigEntry['capabilities'];
 }
 
 interface Preset {
@@ -378,7 +383,12 @@ async function fetchModels(
       key === undefined ? {} : { apiKeyOverride: key },
     );
     const models = await withTimeout(provider.listModels(), 15_000);
-    return models.map((model) => ({ id: model.id, label: model.label, context_limit: model.context_limit }));
+    return models.map((model) => ({
+      id: model.id,
+      label: model.label,
+      context_limit: model.context_limit,
+      capabilities: { tool_calling: model.capabilities.tool_calling },
+    }));
   } catch (error) {
     ui.warn(`Could not fetch the model list: ${describeError(error)}`);
     ui.out(ui.dim('  You can still paste a model ID manually — that always works.'));
@@ -405,10 +415,15 @@ async function testConnection(ui: Ui, provider: ProviderConfig, apiKey: string |
 function mergeModels(preset: Preset, chosen: PresetModel): ModelConfigEntry[] {
   const seen = new Set<string>();
   const out: ModelConfigEntry[] = [];
-  const push = (model: { id: string; label?: string; context_limit?: number }): void => {
+  const push = (model: { id: string; label?: string; context_limit?: number; capabilities?: ModelConfigEntry['capabilities'] }): void => {
     if (seen.has(model.id)) return;
     seen.add(model.id);
-    out.push({ id: model.id, ...(model.label === undefined ? {} : { label: model.label }), ...(model.context_limit === undefined ? {} : { context_limit: model.context_limit }) });
+    out.push({
+      id: model.id,
+      ...(model.label === undefined ? {} : { label: model.label }),
+      ...(model.context_limit === undefined ? {} : { context_limit: model.context_limit }),
+      ...(model.capabilities === undefined ? {} : { capabilities: model.capabilities }),
+    });
   };
   push(chosen);
   for (const model of preset.models) push(model);

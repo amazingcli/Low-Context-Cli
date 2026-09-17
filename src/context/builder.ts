@@ -45,6 +45,12 @@ export interface ContextBuildOptions {
   strategy: ContextStrategy;
   /** When set, total usage triggers compaction upstream. */
   compactionFeature?: { threshold: number };
+  /**
+   * Multiplier on the usable budget. `1` is normal. `0.3` is used after a
+   * provider rejects a request as too large — usually because the configured
+   * `context_limit` is optimistic for that model.
+   */
+  budgetScale?: number;
 }
 
 export const KIND_PRIORITY: Record<ContextItemKind, number> = {
@@ -81,7 +87,8 @@ export class ContextBuilder {
    */
   build(): ContextItem[] {
     const { strategy, modelContextLimit, reserveOutputTokens } = this.options;
-    const usable = Math.max(1, modelContextLimit - reserveOutputTokens);
+    const scale = this.options.budgetScale !== undefined && this.options.budgetScale > 0 ? Math.min(1, this.options.budgetScale) : 1;
+    const usable = Math.max(1, Math.floor((modelContextLimit - reserveOutputTokens) * scale));
     const shares = STRATEGY_SHARE[strategy];
 
     const byKind = new Map<ContextItemKind, ContextItem[]>();

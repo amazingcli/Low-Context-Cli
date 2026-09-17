@@ -29,6 +29,7 @@ import { renderProjectMap, buildProjectMap } from '../index/project-map.js';
 import { extractFromEvents } from '../memory/engine.js';
 import { applyMemoryDirective } from '../tools/memory.js';
 import { guardOutbound } from '../security/guards.js';
+import { isToolCallingUnsupported, isContextOverflow, parseContextLimit } from '../providers/http.js';
 import { scanForInjection } from '../security/injection.js';
 import { changedPathsForRetrieval } from '../git/git.js';
 import { truncate } from '../core/util.js';
@@ -103,15 +104,16 @@ export class Agent {
             };
         }
         /* ------------------- RETRIEVE -> VERIFY -> BUILD CONTEXT ----------------- */
-        const prepared = await this.prepareContext(userMessage, conversation.id);
-        const { retrieval, report, contextBlock, systemInstruction, activeRecent } = prepared;
+        let prepared = await this.prepareContext(userMessage, conversation.id);
+        const { retrieval, report } = prepared;
         compacted = prepared.compacted;
         /* ---------------------------------- LOOP -------------------------------- */
         const baseMessages = [
-            { role: 'system', content: systemInstruction },
-            { role: 'user', content: contextBlock },
-            ...activeRecent.map(toProviderMessage),
+            { role: 'system', content: prepared.systemInstruction },
+            { role: 'user', content: prepared.contextBlock },
+            ...prepared.activeRecent.map(toProviderMessage),
         ];
+        let contextRetried = false;
         const turnMessages = [];
         const usage = [];
         const specs = this.o.registry.specs();
@@ -119,6 +121,14 @@ export class Agent {
         let turns = 0;
         let toolCalls = 0;
         let verification;
+        /**
+         * Set once a provider tells us this model cannot call tools. Retrieval and
+         * answering still work, so we drop the tool catalogue and answer from
+         * verified context instead of failing the request outright.
+         */
+        let toolsUnsupported = false;
+        /** Shrunk after a context-overflow rejection so the retry actually fits. */
+        let contextScale = 1;
         while (turns < this.maxTurns) {
             turns += 1;
             if (this.o.signal?.aborted)
@@ -126,7 +136,7 @@ export class Agent {
             const request = {
                 model: model.id,
                 messages: [...baseMessages, ...turnMessages],
-                ...(specs.length > 0 && model.capabilities.tool_calling ? { tools: specs } : {}),
+                ...(specs.length > 0 && model.capabilities.tool_calling && !toolsUnsupported ? { tools: specs } : {}),
                 ...(config.generation.temperature === undefined ? {} : { temperature: config.generation.temperature }),
                 max_output_tokens: config.generation.max_output_tokens,
                 stream: config.ui.stream && model.capabilities.streaming,
@@ -165,6 +175,36 @@ export class Agent {
             }
             catch (error) {
                 const message = error.message;
+                // Graceful degradation (§45): a model without tool support is still a
+                // usable retrieval-first answering model. Retry the same turn once
+                // without the tool catalogue rather than giving up.
+                if (!toolsUnsupported && request.tools !== undefined && isToolCallingUnsupported(error)) {
+                    toolsUnsupported = true;
+                    this.o.logger.info('provider.tools_unsupported', { model: model.id });
+                    ui.warn?.(`${model.id} does not support tool calling — answering from retrieved context only (no file edits or commands).`);
+                    events.record('request', `tool calling unsupported by ${model.id}; retrying without tools`, { model: model.id });
+                    continue;
+                }
+                // The provider says the request does not fit the model's real window.
+                // Re-retrieve under a much smaller budget and try the turn again — and
+                // say what the real limit turned out to be, because the configured one
+                // is what will break the next request too.
+                if (!contextRetried && isContextOverflow(error)) {
+                    contextRetried = true;
+                    const realLimit = parseContextLimit(error);
+                    contextScale = 0.3;
+                    prepared = await this.prepareContext(userMessage, conversation.id, contextScale);
+                    baseMessages.length = 0;
+                    baseMessages.push({ role: 'system', content: prepared.systemInstruction }, { role: 'user', content: prepared.contextBlock }, ...prepared.activeRecent.map(toProviderMessage));
+                    turnMessages.length = 0;
+                    ui.warn?.(`The provider rejected the request as too large${realLimit === undefined ? '' : ` (real limit: ${realLimit} tokens)`} — retrying with a much smaller context.`);
+                    if (realLimit !== undefined && realLimit < model.context_limit) {
+                        ui.warn?.(`Configured window for ${model.provider}/${model.id} is ${model.context_limit} but the provider allows ${realLimit} — set providers.${model.provider}.models[].context_limit to ${realLimit}.`);
+                    }
+                    logger.info('context.overflow_retry', { model: model.id, ...(realLimit === undefined ? {} : { real_limit: realLimit }) });
+                    events.record('request', `context overflow; retried with budget scale ${contextScale}`, { model: model.id });
+                    continue;
+                }
                 this.o.logger.error('provider.error', { message, model: model.id });
                 ui.error?.(`provider error: ${message}`);
                 events.record('error', `provider error: ${message}`, { model: model.id });
@@ -265,7 +305,13 @@ export class Agent {
      * `lc context show`, so what the user inspects is exactly what a request
      * would contain (§39). No provider call happens here.
      */
-    async prepareContext(query, conversationId) {
+    /**
+     * `budgetScale` shrinks the context budget. It exists for one case: a
+     * provider that rejects a request for exceeding the model's real window
+     * (a configured `context_limit` can be optimistic), where the useful
+     * response is to re-retrieve under a smaller budget rather than to fail.
+     */
+    async prepareContext(query, conversationId, budgetScale = 1) {
         const { workspace, ui, events, logger, model } = this.o;
         const config = workspace.config;
         const retrieval = await runRetrieval({
@@ -309,6 +355,7 @@ export class Agent {
             modelContextLimit: model.context_limit,
             reserveOutputTokens: Math.max(config.context.reserve_output_tokens, config.generation.max_output_tokens),
             strategy: this.strategy,
+            ...(budgetScale === 1 ? {} : { budgetScale }),
         });
         for (const item of [
             ...(taskItem ? [taskItem] : []),

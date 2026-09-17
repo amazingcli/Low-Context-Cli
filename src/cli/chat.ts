@@ -134,6 +134,7 @@ function buildAgentUi(ctx: CommandContext, options: { explain: boolean }): Agent
       if (message === '') ui.stopSpinner();
     },
     note: (message) => ui.note(message),
+    warn: (message) => ui.warn(message),
     toolCall: (call, preview) => {
       ui.stopSpinner();
       const detail = Object.keys(call.arguments).length === 0 ? '' : truncate(inlineArgs(call.arguments), 86);

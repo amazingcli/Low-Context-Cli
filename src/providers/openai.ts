@@ -9,7 +9,7 @@ import type {
   UsageReport,
 } from '../core/types.js';
 import type { ChatProvider } from './types.js';
-import { ProviderHttp } from './http.js';
+import { ProviderHttp, mapHttpError } from './http.js';
 import { parseSse, stopReasonOf, guessContextLimit } from './types.js';
 
 export class OpenAIProvider implements ChatProvider {
@@ -67,7 +67,9 @@ export class OpenAIProvider implements ChatProvider {
     const response = await this.http.streamPost(endpoint, payload, undefined, request.signal);
     if (!response.ok) {
       const detail = await response.text().catch(() => '');
-      throw new ProviderHttpError(response.status, detail);
+      // Route through the shared mapper so a 401/429/overflow keeps its code and
+      // its fix hint instead of arriving as a bare "HTTP 429: {...}" string.
+      throw mapHttpError(response.status, detail);
     }
 
     let toolCalls: { index: number; id: string; name: string; arguments: string }[] = [];
@@ -130,13 +132,23 @@ export class OpenAIProvider implements ChatProvider {
    */
   async listModels(): Promise<import('../core/types.js').ModelDescriptor[]> {
     const data = (await this.http.getJson('/models')) as {
-      data?: { id?: string; name?: string; context_length?: number }[];
-      models?: { id?: string; name?: string; context_length?: number }[];
+      data?: { id?: string; name?: string; context_length?: number; supported_parameters?: unknown }[];
+      models?: { id?: string; name?: string; context_length?: number; supported_parameters?: unknown }[];
     };
     const entries = data.data ?? data.models ?? [];
     return entries
-      .map((entry) => ({ id: entry.id ?? entry.name, context: entry.context_length }))
-      .filter((entry): entry is { id: string; context: number | undefined } => typeof entry.id === 'string' && entry.id !== '')
+      .map((entry) => ({
+        id: entry.id ?? entry.name,
+        context: entry.context_length,
+        // OpenRouter (and anything else that implements it) advertises which
+        // request parameters a model accepts. "tools" missing means the model
+        // cannot call tools at all, which matters: gateways reject the whole
+        // request rather than ignoring the field.
+        tools: Array.isArray(entry.supported_parameters)
+          ? (entry.supported_parameters as unknown[]).includes('tools')
+          : undefined,
+      }))
+      .filter((entry): entry is { id: string; context: number | undefined; tools: boolean | undefined } => typeof entry.id === 'string' && entry.id !== '')
       .map((entry) => ({
         id: entry.id,
         provider: this.name,
@@ -145,7 +157,7 @@ export class OpenAIProvider implements ChatProvider {
         max_output: 8_192,
         capabilities: {
           streaming: true,
-          tool_calling: true,
+          tool_calling: entry.tools ?? true,
           embeddings: false,
           vision: true,
           json_mode: true,
@@ -167,11 +179,6 @@ export class OpenAIProvider implements ChatProvider {
   }
 }
 
-class ProviderHttpError extends Error {
-  constructor(readonly status: number, readonly detail: string) {
-    super(`HTTP ${status}: ${detail.slice(0, 200)}`);
-  }
-}
 
 function mapMessages(messages: readonly ProviderMessage[]): Record<string, unknown>[] {
   return messages.map((message) => {
@@ -206,5 +213,5 @@ function numberOrZero(value: unknown): number {
 export async function throwForStatus(response: Response): Promise<void> {
   if (response.ok) return;
   const text = await response.text().catch(() => '');
-  throw new ProviderHttpError(response.status, text);
+  throw mapHttpError(response.status, text);
 }

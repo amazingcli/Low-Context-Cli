@@ -8,6 +8,8 @@ import { buildSystemPrompt } from '../src/agent/system-prompt.js';
 import { filterCommands, matchScore, SLASH_COMMANDS } from '../src/cli/slash-menu.js';
 import { parseKeys, visibleLength } from '../src/cli/prompt.js';
 import { defaultConfig } from '../src/core/config.js';
+import { isToolCallingUnsupported, isContextOverflow, parseContextLimit, mapHttpError } from '../src/providers/http.js';
+import { ContextBuilder } from '../src/context/builder.js';
 
 /* ----------------------------- provider auth ------------------------------ */
 
@@ -111,6 +113,62 @@ test('OpenAI-compatible providers use Bearer and tolerate both /models shapes', 
   } finally {
     second.restore();
   }
+});
+
+test('gateway refusals are recognised, including the two that degrade gracefully', () => {
+  // Tool support: gateways reject the whole request instead of ignoring `tools`.
+  const orToolError = new Error('HTTP 404: {"error":{"message":"No endpoints found that support tool use. Try disabling \\"list_directory\\"."}}');
+  assert.equal(isToolCallingUnsupported(orToolError), true);
+  assert.equal(isToolCallingUnsupported(new Error('this model does not support function calling')), true);
+  assert.equal(isToolCallingUnsupported(new Error('HTTP 500: internal error')), false);
+
+  const mapped = mapHttpError(404, 'No endpoints found that support tool use.');
+  assert.equal(mapped.code, 'PROVIDER_UNSUPPORTED');
+  assert.match(mapped.fix ?? '', /without tools/);
+
+  // Context overflow: the retry needs the model's real limit.
+  const overflow = new Error(
+    'HTTP 400: {"error":{"message":"This endpoint\'s maximum context length is 32768 tokens. However, you requested about 36721 tokens"}}',
+  );
+  assert.equal(isContextOverflow(overflow), true);
+  assert.equal(parseContextLimit(overflow), 32_768);
+  assert.equal(isContextOverflow(new Error('HTTP 429: rate limited')), false);
+  assert.equal(parseContextLimit(new Error('something else entirely')), undefined);
+  const rateLimited = mapHttpError(429, 'rate limited');
+  assert.equal(rateLimited.code, 'PROVIDER_HTTP');
+  assert.match(rateLimited.fix ?? '', /Wait a moment|different model/);
+  assert.equal(isContextOverflow(rateLimited), false, 'a rate limit is not an overflow');
+});
+
+test('a shrunk budget leaves room for a retry after an overflow rejection', () => {
+  const build = (budgetScale?: number): ContextBuilder => {
+    const builder = new ContextBuilder({
+      modelContextLimit: 32_768,
+      reserveOutputTokens: 8_192,
+      strategy: 'balanced',
+      ...(budgetScale === undefined ? {} : { budgetScale }),
+    });
+    // A pile of code that cannot fit a 32k window with an 8k reserve.
+    for (let i = 0; i < 40; i += 1) {
+      builder.add({
+        id: `ctx:file${i}.ts`,
+        kind: 'code',
+        priority: 0.9,
+        label: `file${i}.ts`,
+        content: `1: export function f${i}() { return ${i}; }\n`.repeat(30),
+        source_refs: [],
+      });
+    }
+    return builder;
+  };
+
+  const normal = build().build();
+  const shrunk = build(0.3).build();
+  const tokens = (items: readonly { tokens: number }[]): number => items.reduce((sum, item) => sum + item.tokens, 0);
+  const scaledUsable = Math.floor((32_768 - 8_192) * 0.3);
+  assert.ok(tokens(shrunk) < tokens(normal), 'the retry budget selects less');
+  assert.ok(tokens(shrunk) <= scaledUsable, `it stays inside the scaled usable budget (${tokens(shrunk)} vs ${scaledUsable})`);
+  assert.ok(shrunk.length > 0, 'and it does not throw the context away');
 });
 
 /* ------------------------------ permissions ------------------------------- */

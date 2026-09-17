@@ -31,7 +31,8 @@ export class ContextBuilder {
      */
     build() {
         const { strategy, modelContextLimit, reserveOutputTokens } = this.options;
-        const usable = Math.max(1, modelContextLimit - reserveOutputTokens);
+        const scale = this.options.budgetScale !== undefined && this.options.budgetScale > 0 ? Math.min(1, this.options.budgetScale) : 1;
+        const usable = Math.max(1, Math.floor((modelContextLimit - reserveOutputTokens) * scale));
         const shares = STRATEGY_SHARE[strategy];
         const byKind = new Map();
         for (const item of this.items) {

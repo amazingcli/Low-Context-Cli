@@ -1,4 +1,4 @@
-import { ProviderHttp } from './http.js';
+import { ProviderHttp, mapHttpError } from './http.js';
 import { parseSse, stopReasonOf, guessContextLimit } from './types.js';
 export class OpenAIProvider {
     name;
@@ -47,7 +47,9 @@ export class OpenAIProvider {
         const response = await this.http.streamPost(endpoint, payload, undefined, request.signal);
         if (!response.ok) {
             const detail = await response.text().catch(() => '');
-            throw new ProviderHttpError(response.status, detail);
+            // Route through the shared mapper so a 401/429/overflow keeps its code and
+            // its fix hint instead of arriving as a bare "HTTP 429: {...}" string.
+            throw mapHttpError(response.status, detail);
         }
         let toolCalls = [];
         let contentAccum = '';
@@ -114,7 +116,17 @@ export class OpenAIProvider {
         const data = (await this.http.getJson('/models'));
         const entries = data.data ?? data.models ?? [];
         return entries
-            .map((entry) => ({ id: entry.id ?? entry.name, context: entry.context_length }))
+            .map((entry) => ({
+            id: entry.id ?? entry.name,
+            context: entry.context_length,
+            // OpenRouter (and anything else that implements it) advertises which
+            // request parameters a model accepts. "tools" missing means the model
+            // cannot call tools at all, which matters: gateways reject the whole
+            // request rather than ignoring the field.
+            tools: Array.isArray(entry.supported_parameters)
+                ? entry.supported_parameters.includes('tools')
+                : undefined,
+        }))
             .filter((entry) => typeof entry.id === 'string' && entry.id !== '')
             .map((entry) => ({
             id: entry.id,
@@ -124,7 +136,7 @@ export class OpenAIProvider {
             max_output: 8_192,
             capabilities: {
                 streaming: true,
-                tool_calling: true,
+                tool_calling: entry.tools ?? true,
                 embeddings: false,
                 vision: true,
                 json_mode: true,
@@ -143,15 +155,6 @@ export class OpenAIProvider {
             cached_input_tokens: details ? numberOrZero(details.cached_tokens) : undefined,
             estimated: false,
         };
-    }
-}
-class ProviderHttpError extends Error {
-    status;
-    detail;
-    constructor(status, detail) {
-        super(`HTTP ${status}: ${detail.slice(0, 200)}`);
-        this.status = status;
-        this.detail = detail;
     }
 }
 function mapMessages(messages) {
@@ -186,6 +189,6 @@ export async function throwForStatus(response) {
     if (response.ok)
         return;
     const text = await response.text().catch(() => '');
-    throw new ProviderHttpError(response.status, text);
+    throw mapHttpError(response.status, text);
 }
 //# sourceMappingURL=openai.js.map
