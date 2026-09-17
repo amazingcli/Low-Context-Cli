@@ -25,6 +25,15 @@ const ANSI = /\u001b\[[0-9;]*[A-Za-z]/g;
 export function visibleWidth(text) {
     return text.replace(ANSI, '').length;
 }
+/**
+ * Terminal width for layout, with two guards: `columns` is undefined when the
+ * stream is not a TTY, and some pty wrappers report 0 — both would collapse a
+ * box to its minimum width instead of filling the window.
+ */
+export function terminalWidth() {
+    const columns = stdout.columns;
+    return columns !== undefined && columns > 20 ? columns : 80;
+}
 const CODES = {
     reset: '\u001b[0m',
     bold: '\u001b[1m',
@@ -129,7 +138,7 @@ export class Ui {
     }
     /** A full-width hairline, used to close a turn or separate sections. */
     divider(indent = 2, char = '─') {
-        const width = Math.max(20, (stdout.columns ?? 80) - indent - 2);
+        const width = Math.max(20, terminalWidth() - indent - 2);
         this.out(`${' '.repeat(indent)}${this.dim(char.repeat(width))}`);
     }
     /**
@@ -142,7 +151,7 @@ export class Ui {
     box(title, rows, options = {}) {
         const indent = ' '.repeat(options.indent ?? 0);
         const labelWidth = options.labelWidth ?? Math.max(0, ...rows.map(([label]) => label.length));
-        const maxWidth = options.maxWidth ?? Math.max(44, (stdout.columns ?? 80) - (options.indent ?? 0) - 2);
+        const maxWidth = options.maxWidth ?? Math.max(44, terminalWidth() - (options.indent ?? 0) - 2);
         const valueWidth = Math.max(10, maxWidth - labelWidth - 5);
         const prepared = rows.map(([label, value]) => [label.padEnd(labelWidth), truncate(value, valueWidth, '…')]);
         // +1 so the widest row keeps a space before the closing border.

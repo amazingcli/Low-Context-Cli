@@ -1000,10 +1000,10 @@ function printBanner(
   ui.box(
     'session',
     [
-      ['model', `${model.provider}/${model.id}  ·  ${formatTokens(model.context_limit)} window`],
+      ['model', `${model.provider}/${model.id}`],
       ['project', `${workspace.project.name}  ·  ${shortPath(workspace.root)}`],
       ['index', `${counts.files} files indexed  ·  ${counts.memory} memories`],
-      ['retrieval', `${ctx.config.context.strategy} strategy  ·  ${ctx.config.embedding.enabled ? 'embeddings on' : 'keyword + symbol search'}`],
+      ['context', `${formatTokens(model.context_limit)} window  ·  ${ctx.config.context.strategy} strategy  ·  ${ctx.config.embedding.enabled ? 'embeddings on' : 'keyword+symbols'}`],
       ['permissions', `${mode}  ·  ${modeNote}`],
       ['session', sessionId],
     ],
