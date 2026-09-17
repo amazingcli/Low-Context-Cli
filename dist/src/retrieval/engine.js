@@ -201,8 +201,9 @@ export async function runRetrieval(deps, options) {
             const content = await safe(readFile(abs, 'utf8'), '');
             if (!content)
                 continue;
-            // Bound how much source enters the candidate set.
-            const output = capBytes(content, deps.config.context.max_retrieved_file_bytes);
+            // Bound how much source enters the candidate set, and number it so the
+            // model can cite lines that actually exist in the file.
+            const output = renderNumberedSource(content, deps.config.context.max_retrieved_file_bytes);
             item.verified = 1;
             item.reasons.push('source verified');
             item.content = output;
@@ -269,10 +270,44 @@ function fileReason(file) {
         parts.push('symbols present');
     return parts.join(', ') || 'index lexical match';
 }
-function capBytes(text, maxBytes) {
-    if (text.length <= maxBytes)
-        return text;
-    return `${text.slice(0, maxBytes)}\n…[${text.length - maxBytes} chars truncated — retrieve on demand]`;
+/**
+ * Verified source is sent with **absolute** line numbers.
+ *
+ * Without them the model infers positions from the shape of the region it was
+ * handed, which is how a correct file and a correct symbol still come back with
+ * `path:line` citations a few dozen lines off — the one mistake a coding agent
+ * must not make, because the next step is editing at that line.
+ *
+ * Large files keep the head and the tail, and say exactly which lines were
+ * dropped instead of pretending the region is contiguous.
+ */
+export function renderNumberedSource(content, maxChars) {
+    const lines = content.split('\n');
+    const numbered = lines.map((line, index) => `${index + 1}: ${line}`);
+    const full = numbered.join('\n');
+    if (full.length <= maxChars)
+        return full;
+    const headBudget = Math.floor(maxChars * 0.7);
+    const tailBudget = Math.max(200, maxChars - headBudget - 120);
+    const head = [];
+    let headUsed = 0;
+    let i = 0;
+    while (i < numbered.length && headUsed + numbered[i].length + 1 <= headBudget) {
+        head.push(numbered[i]);
+        headUsed += numbered[i].length + 1;
+        i += 1;
+    }
+    const tail = [];
+    let tailUsed = 0;
+    let j = numbered.length - 1;
+    while (j >= i && tailUsed + numbered[j].length + 1 <= tailBudget) {
+        tail.unshift(numbered[j]);
+        tailUsed += numbered[j].length + 1;
+        j -= 1;
+    }
+    const omitted = j - i + 1;
+    const gap = `… [${omitted} line(s) omitted: ${i + 1}–${j + 1} of ${numbered.length} — read the file to see them] …`;
+    return [...head, gap, ...tail].join('\n');
 }
 async function safe(promise, fallback) {
     try {

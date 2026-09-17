@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { runRetrieval, candidatesToContextItems } from '../src/retrieval/engine.js';
+import { runRetrieval, candidatesToContextItems, renderNumberedSource } from '../src/retrieval/engine.js';
 import { understandQuery, planForIntent } from '../src/retrieval/intent.js';
 import { normalizeLexical, rankCandidates, dedupe, scoreCandidate } from '../src/search/rank.js';
 import { tokenize, analyzeQuery, splitIdentifier } from '../src/search/tokenize.js';
@@ -11,6 +11,23 @@ import { FileConversationStore } from '../src/storage/conversation-store.js';
 import { projectIdForRoot } from '../src/storage/project-store.js';
 import { defaultConfig } from '../src/core/config.js';
 import { makeProject, tempDir } from './helpers.js';
+/* ------------------------- verified source formatting ----------------------- */
+test('verified source carries absolute line numbers', () => {
+    const source = ['def first():', '    pass', 'def second():', '    return 2'].join('\n');
+    assert.equal(renderNumberedSource(source, 10_000), '1: def first():\n2:     pass\n3: def second():\n4:     return 2');
+});
+test('a file too large to send keeps its head and tail, and says what was dropped', () => {
+    const lines = Array.from({ length: 400 }, (_, index) => `line number ${index + 1} ${'x'.repeat(20)}`);
+    const rendered = renderNumberedSource(lines.join('\n'), 2_000);
+    const parts = rendered.split('\n');
+    assert.match(parts[0], /^1: line number 1 /);
+    assert.match(rendered, /line\(s\) omitted: \d+–\d+ of 400/);
+    assert.match(parts[parts.length - 1], /^400: line number 400 /);
+    assert.ok(rendered.length <= 2_000 + 200, 'the cap is respected (plus the gap marker)');
+    // Numbers stay absolute across the gap, so a citation from the tail is real.
+    const tailFirst = parts.find((line) => /^\d+: line number \d+ /.test(line) && Number(line.split(':')[0]) > 300);
+    assert.ok(tailFirst !== undefined);
+});
 test('query understanding separates change, question, historical and whole-project intent', () => {
     assert.equal(understandQuery('fix the login timeout bug').kind, 'code_change');
     assert.equal(understandQuery('why is the payment system slow?').kind, 'question');

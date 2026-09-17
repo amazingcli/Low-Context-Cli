@@ -157,6 +157,7 @@ function contextDiscipline(limit?: number): string {
     '  - Before every tool call, know what you expect to learn and what you will do with it. If the answer would not change your next action, do not fetch it.',
     '  - When two or three results have stopped adding information, stop retrieving and act.',
     '  - Tool output is trimmed before you see it; the full text stays on disk and can be read again on demand. Do not ask for it twice.',
+    '  - Retrieved source arrives WITH absolute line numbers. Cite those numbers verbatim — never count lines yourself, and never quote a line you did not see numbered.',
     '  - Do not echo large code blocks back to the user. Cite path:line and quote only the line that matters.',
   ];
   if (window <= 32_768) {
