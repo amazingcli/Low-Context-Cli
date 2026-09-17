@@ -38,7 +38,7 @@ export class GeminiProvider {
                             functionDeclarations: request.tools.map((tool) => ({
                                 name: tool.name,
                                 description: tool.description,
-                                parameters: tool.parameters,
+                                parameters: sanitizeSchema(tool.parameters),
                             })),
                         },
                     ],
@@ -132,6 +132,26 @@ export class GeminiProvider {
             };
         });
     }
+}
+/**
+ * Gemini accepts an OpenAPI-ish subset of JSON Schema and rejects *unknown*
+ * field names outright (HTTP 400 "Cannot find field"), so a schema that is
+ * valid for OpenAI — which allows `additionalProperties` — breaks every tool
+ * call here. Strip what Gemini does not define, recursively.
+ */
+const UNSUPPORTED_SCHEMA_KEYS = new Set(['additionalProperties', '$schema', 'examples', 'default', 'unevaluatedProperties', 'patternProperties']);
+export function sanitizeSchema(schema) {
+    if (Array.isArray(schema))
+        return schema.map(sanitizeSchema);
+    if (schema === null || typeof schema !== 'object')
+        return schema;
+    const out = {};
+    for (const [key, value] of Object.entries(schema)) {
+        if (UNSUPPORTED_SCHEMA_KEYS.has(key))
+            continue;
+        out[key] = sanitizeSchema(value);
+    }
+    return out;
 }
 function mapMessages(messages) {
     const systemParts = [];

@@ -43,6 +43,14 @@ If `lc providers test` says the credential is missing, check the variable name i
 Codes: `PROVIDER_AUTH`, `PROVIDER_HTTP`, `PROVIDER_TIMEOUT`. See
 [providers.md](providers.md).
 
+### `Invalid JSON payload received. Unknown name "additionalProperties"` (Gemini)
+
+Gemini accepts an OpenAPI-ish subset of JSON Schema and rejects unknown field
+*names* instead of ignoring them, while OpenAI accepts `additionalProperties`.
+Tool schemas are narrowed per provider before they are sent, so this is handled —
+but the same rule applies to a hand-written `headers`/`parameters` entry: keep the
+schema to `type`, `description`, `properties`, `required`, `enum` and `items`.
+
 ### "Expected OAuth 2 access token" (Google) or a 401 from Anthropic
 
 The key is fine — the header is wrong. Each API requires its own auth header

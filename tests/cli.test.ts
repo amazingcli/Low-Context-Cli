@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { GeminiProvider } from '../src/providers/gemini.js';
+import { GeminiProvider, sanitizeSchema } from '../src/providers/gemini.js';
 import { AnthropicProvider } from '../src/providers/anthropic.js';
 import { OpenAIProvider } from '../src/providers/openai.js';
 import { PermissionEngine } from '../src/tools/permissions.js';
@@ -45,6 +45,33 @@ test('Gemini authenticates with x-goog-api-key and never sends a Bearer token', 
   } finally {
     capture.restore();
   }
+});
+
+test('Gemini tool schemas drop fields its API rejects', () => {
+  // Gemini returns HTTP 400 "Cannot find field" for additionalProperties, so a
+  // schema that works for OpenAI must be narrowed before it is sent.
+  const schema = {
+    type: 'object',
+    additionalProperties: false,
+    required: ['path'],
+    properties: {
+      path: { type: 'string', description: 'file to read' },
+      limit: { type: 'number', default: 100 },
+      mode: { type: 'string', enum: ['a', 'b'], additionalProperties: false },
+    },
+  };
+  const cleaned = sanitizeSchema(schema) as Record<string, unknown>;
+  assert.equal(cleaned.additionalProperties, undefined);
+  assert.equal(cleaned.type, 'object');
+  assert.deepEqual(cleaned.required, ['path']);
+  const properties = cleaned.properties as Record<string, Record<string, unknown>>;
+  assert.equal(properties.limit?.default, undefined, 'default is stripped too');
+  assert.equal(properties.mode?.additionalProperties, undefined);
+  assert.deepEqual(properties.mode?.enum, ['a', 'b'], 'supported keywords survive');
+  assert.equal(properties.path?.description, 'file to read');
+
+  assert.deepEqual(sanitizeSchema([{ additionalProperties: false, a: 1 }]), [{ a: 1 }]);
+  assert.equal(sanitizeSchema('text'), 'text');
 });
 
 test('Anthropic authenticates with x-api-key, not Bearer', async () => {

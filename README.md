@@ -284,7 +284,7 @@ Full detail, including layer-by-layer data flow: **[docs/architecture.md](docs/a
 
 ```bash
 npm run typecheck    # tsc --noEmit
-npm test             # build + node:test  (78 tests)
+npm test             # build + node:test  (79 tests)
 npm run bench        # 33 benchmark checks across real subsystems
 npm run dev          # build and run the CLI
 ```
