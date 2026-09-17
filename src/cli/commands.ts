@@ -36,11 +36,12 @@ import { PermissionEngine } from '../tools/permissions.js';
 import { buildDirectoryTree, renderModuleMap, renderProjectMap, renderFileMapEntry, renderTree, buildProjectMap } from '../index/project-map.js';
 import { refreshProjectIndex, detectStale } from '../index/indexer.js';
 import { redactString } from '../security/redact.js';
-import { maskSecret, resolveSecret, deleteCredential } from '../security/secrets.js';
+import { maskSecret, resolveSecret, deleteCredential, setCredential } from '../security/secrets.js';
 import { runAgentTurn } from './chat.js';
 import { flagBool, flagNumber, flagString, type ParsedArgs } from './args.js';
 import type { Ui } from './ui.js';
 import type { MemoryRecord, PermissionMode } from '../core/types.js';
+import type { ModelConfigEntry } from '../core/config.js';
 import * as git from '../git/git.js';
 
 export interface CommandContext {
@@ -230,7 +231,10 @@ async function providersCommand(ctx: CommandContext, sub: string): Promise<numbe
       const name = flagString(ctx.args.flags, 'name') ?? ctx.args.positionals[0];
       const kind = (flagString(ctx.args.flags, 'kind') ?? 'openai') as ProviderKind;
       if (!name) {
-        ui.error('providers add requires --name <id>');
+        // No flags and a real terminal: ask, rather than making the user
+        // memorise six flag names. Piped input keeps the strict behaviour.
+        if (process.stdin.isTTY === true) return providersAddInteractive(ctx);
+        ui.error('providers add requires --name <id>   (or run it in a terminal to be asked)');
         return 2;
       }
       if (!['openai', 'anthropic', 'gemini', 'local', 'custom', 'mock'].includes(kind)) {
@@ -1038,6 +1042,76 @@ function stripRuntimeConfig(config: LowContextConfig): LowContextConfig {
 
 function redactConfig(config: LowContextConfig): string {
   return redactString(JSON.stringify(config, null, 2));
+}
+
+/* ============================== providers add ============================= */
+
+const PROVIDER_KINDS: ProviderKind[] = ['openai', 'anthropic', 'gemini', 'custom', 'local', 'mock'];
+
+const KIND_BASE_URLS: Record<string, string> = {
+  openai: 'https://api.openai.com/v1',
+  anthropic: 'https://api.anthropic.com/v1',
+  gemini: 'https://generativelanguage.googleapis.com/v1beta',
+  custom: 'https://openrouter.ai/api/v1',
+  local: 'http://127.0.0.1:11434/v1',
+};
+
+/**
+ * Interactive `lc providers add`. Covers the case the wizard cannot: adding a
+ * second provider to an existing configuration without re-running setup. The
+ * model ID is free text on purpose — any gateway, router or local server can be
+ * configured without touching code.
+ */
+async function providersAddInteractive(ctx: CommandContext): Promise<number> {
+  const { ui, config } = ctx;
+  ui.heading('Add a provider');
+  PROVIDER_KINDS.forEach((kind, index) => ui.out(`  ${index + 1}) ${kind}`));
+  const kindChoice = Number(await ui.ask('Kind', '1'));
+  const kind = PROVIDER_KINDS[Number.isFinite(kindChoice) ? Math.max(0, Math.min(PROVIDER_KINDS.length - 1, kindChoice - 1)) : 0] as ProviderKind;
+
+  const suggestedId = kind === 'custom' ? 'gateway' : kind;
+  const id = (await ui.ask('Provider id (used in config, /model and --provider)', suggestedId)).trim() || suggestedId;
+
+  const baseUrl = kind === 'mock' ? undefined : (await ui.ask('Base URL', KIND_BASE_URLS[kind] ?? '')).trim();
+
+  const envName = `${id.toUpperCase().replace(/[^A-Z0-9]/g, '_')}_API_KEY`;
+  ui.out('');
+  ui.out(`API key: export ${envName}, or store it now in credentials.json (0600).`);
+  const storeKey = (await ui.ask('Store a key now? (y/N)', 'n')).toLowerCase().startsWith('y');
+  const apiKey = storeKey ? await ui.askSecret(`Paste the ${id} API key (input hidden)`) : undefined;
+  if (storeKey && apiKey === '') ui.warn('No key entered; the environment variable will be used instead.');
+
+  ui.out('');
+  const modelId = (await ui.ask('Model ID (exactly as the provider expects it)', '')).trim();
+  if (modelId === '') {
+    ui.error('A model ID is required — without it the provider cannot be selected.');
+    return 2;
+  }
+  const limitRaw = (await ui.ask('Context window in tokens (Enter to auto-detect)', '')).trim();
+  const limit = Number(limitRaw);
+  const model: ModelConfigEntry = {
+    id: modelId,
+    label: modelId,
+    ...(Number.isFinite(limit) && limit > 0 ? { context_limit: Math.floor(limit) } : {}),
+  };
+
+  const previous = config.providers.find((p) => p.id === id);
+  const provider: ProviderConfig = {
+    ...previous,
+    id,
+    kind,
+    label: previous?.label ?? id,
+    enabled: true,
+    ...(baseUrl === undefined || baseUrl === '' ? {} : { base_url: baseUrl.replace(/\/+$/, '') }),
+    ...(kind === 'mock' ? {} : { api_key_env: envName, api_key_ref: `providers.${id}.api_key` }),
+    models: [model, ...(previous?.models ?? []).filter((m) => m.id !== modelId)],
+  };
+
+  await saveGlobalConfig({ ...config, providers: [...config.providers.filter((p) => p.id !== id), provider] });
+  if (apiKey) await setCredential(`providers.${id}.api_key`, apiKey);
+  ui.success(`Added provider "${id}" (${kind}) with model ${modelId}.`);
+  if (!config.active_provider) ui.out(`Activate it with: lc models use ${modelId} --provider ${id}`);
+  return 0;
 }
 
 /* =============================== permissions ============================== */

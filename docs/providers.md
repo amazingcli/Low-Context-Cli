@@ -78,6 +78,52 @@ lc providers remove  openai
 which environment variable to export. It never asks you to paste a key into a file
 it then commits.
 
+### Setup wizard: gateways, local servers and any model ID
+
+`lc init` covers more than the three hosted APIs. Alongside Anthropic, OpenAI,
+Gemini and the offline mock, it offers:
+
+- **OpenAI-compatible gateway / router** (`custom`) — OpenRouter, TokenRouter,
+  DeepSeek, Groq, Together, xAI, Mistral, Fireworks, Azure-style endpoints,
+  LiteLLM. It asks for the **base URL** and the **key**, then for the model.
+- **Local model server** (`local`) — Ollama, LM Studio, vLLM, llama.cpp. Same
+  flow, key optional.
+
+For every provider the model step accepts three answers:
+
+| Choice | Effect |
+| --- | --- |
+| a listed number | uses the bundled model entry |
+| **Paste a model ID** | registers *any* model name your provider accepts, plus an optional context window |
+| **Fetch the model list** | calls the provider's `GET /models` and lets you pick from what the key can actually reach |
+
+Fetching is advisory: it times out after 15s and a failure falls back to the
+bundled list, because a gateway that does not implement `/models` is still
+usable. After saving, the wizard offers a connection test and reports the real
+error if the key or URL is wrong — the config is kept either way.
+
+Keys entered in the wizard are stored in
+`$LOW_CONTEXT_HOME/config/credentials.json` with mode `0600`; they never enter
+`config.json`.
+
+### Authentication is per API, not per vendor
+
+Each bundled client sends the header its API requires, and sending the wrong one
+is a hard `401` even with a valid key:
+
+| Provider | Header |
+| --- | --- |
+| `openai`, `custom`, `local` | `Authorization: Bearer <key>` |
+| `anthropic` | `x-api-key: <key>` (+ `anthropic-version`) |
+| `gemini` | `x-goog-api-key: <key>` |
+
+Gemini keys are sent as a header rather than a `?key=` query parameter, which
+keeps them out of URLs, logs and shell history. If Google ever answers
+`Expected OAuth 2 access token`, that is the failure mode of a Bearer header
+getting through — check you have not pointed the `gemini` kind at a proxy that
+rewrites headers, and if you are talking to an Anthropic-compatible gateway
+instead, configure it as `custom`.
+
 ## Adding a provider by hand
 
 ```json

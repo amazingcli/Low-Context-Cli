@@ -29,8 +29,8 @@ const CODES = {
     gray: '\u001b[90m',
 };
 export class Ui {
-    options;
     enabled;
+    options;
     spinnerTimer;
     spinnerFrame = 0;
     spinnerText = '';
@@ -52,6 +52,17 @@ export class Ui {
     }
     get verbose() {
         return this.options.responseMode === 'verbose' || this.debug;
+    }
+    get responseMode() {
+        return this.options.responseMode;
+    }
+    /**
+     * Switch verbosity mid-session (`/verbose`, `/debug`, `/quiet`). The UI is
+     * constructed once per process, so the mode has to be mutable for the slash
+     * commands to mean anything.
+     */
+    setResponseMode(mode) {
+        this.options.responseMode = mode;
     }
     color(name, text) {
         if (!this.enabled)

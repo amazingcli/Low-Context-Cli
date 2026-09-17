@@ -1,25 +1,30 @@
 import { ProviderHttp, mapHttpError } from './http.js';
-import { parseSse, stopReasonOf } from './types.js';
+import { parseSse, stopReasonOf, guessContextLimit } from './types.js';
 export class GeminiProvider {
     name;
     kind = 'gemini';
     http;
-    apiKey;
     constructor(name, options) {
         this.name = name;
-        this.apiKey = options.apiKey;
         // Key may arrive as a query param; strip an accidental ?key= from baseUrl.
+        //
+        // Auth is sent as the `x-goog-api-key` header ONLY. Passing the key to
+        // ProviderHttp would add `Authorization: Bearer …`, and Google rejects any
+        // Bearer token that is not an OAuth2 access token with HTTP 401
+        // "Expected OAuth 2 access token" — even when ?key= is also present. The
+        // header also keeps the key out of URLs (and therefore out of logs).
         this.http = new ProviderHttp({
             baseUrl: options.baseUrl.replace(/\?key=.*$/, ''),
-            apiKey: options.apiKey,
-            headers: options.headers,
+            headers: {
+                ...(options.apiKey ? { 'x-goog-api-key': options.apiKey } : {}),
+                ...options.headers,
+            },
             timeoutMs: options.timeoutMs,
         });
     }
     url(model, stream) {
         const suffix = stream ? 'streamGenerateContent?alt=sse' : 'generateContent';
-        const key = this.apiKey ? `&key=${encodeURIComponent(this.apiKey)}` : '';
-        return `/models/${encodeURIComponent(model)}:${suffix}${key}`;
+        return `/models/${encodeURIComponent(model)}:${suffix}`;
     }
     async *generate(request) {
         const { systemInstruction, contents } = mapMessages(request.messages);
@@ -102,8 +107,30 @@ export class GeminiProvider {
         }
         yield { type: 'done', stop_reason: stopReasonOf('stop'), message: { role: 'assistant', content: text } };
     }
-    listModels() {
-        return Promise.resolve([]);
+    /** Advisory catalogue from `GET /models`, used by the setup wizard. */
+    async listModels() {
+        const data = (await this.http.getJson('/models?pageSize=200'));
+        return (data.models ?? [])
+            .filter((model) => typeof model.name === 'string')
+            .map((model) => {
+            const id = model.name.replace(/^models\//, '');
+            return {
+                id,
+                provider: this.name,
+                label: model.displayName ?? id,
+                context_limit: model.inputTokenLimit ?? guessContextLimit(id),
+                max_output: model.outputTokenLimit ?? 8_192,
+                capabilities: {
+                    streaming: true,
+                    tool_calling: (model.supportedGenerationMethods ?? []).includes('generateContent'),
+                    embeddings: false,
+                    vision: true,
+                    json_mode: true,
+                    reasoning: /thinking|pro/i.test(id),
+                    exact_usage: true,
+                },
+            };
+        });
     }
 }
 function mapMessages(messages) {

@@ -131,6 +131,41 @@ Input: 18,214 (reported)        Output: 812 (reported)      ~$0.053
 `lc context show` breaks the input down by section, and
 `lc context show --debug` adds the per-candidate retrieval trace.
 
+## Switching models
+
+The catalog is whatever your config lists, so a model never has to be "supported"
+by this project to be usable:
+
+```bash
+lc models list                   # configured models, with context windows
+lc models use gpt-4o             # switch the active model
+lc models test                   # does the key reach this model?
+```
+
+Inside a session:
+
+```
+project› /models                 # numbered list, ● marks the active one
+project› /models 3               # switch by number
+project› /model gpt-4o           # switch by id
+```
+
+A switch rebuilds the provider client and the agent, keeps the conversation and
+task state, and updates the session record — the new model inherits the same
+context budget accounting and a system prompt resized to its window.
+
+To register a model the built-in lists do not know about, use the wizard's
+**Paste a model ID** option (`lc init`), or add it to config directly:
+
+```json
+{ "id": "some-new-model", "label": "Some New Model", "context_limit": 200000, "max_output": 16384 }
+```
+
+Context windows matter more than anything else here: the system prompt explains
+the retrieval budget in tokens, scaled to `context_limit` (a 32k local model is
+told to read one function at a time; a 1M model is told a large window is not
+permission to fill it).
+
 ## Choosing a model
 
 - **Local models** (`ollama`, or any OpenAI-compatible server) work well because

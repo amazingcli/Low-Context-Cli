@@ -6,10 +6,16 @@ export class AnthropicProvider {
     http;
     constructor(name, options) {
         this.name = name;
+        // Anthropic authenticates with `x-api-key`, NOT `Authorization: Bearer`.
+        // Passing the key to ProviderHttp would add the Bearer header, and the API
+        // rejects it with HTTP 401 — so the key is sent as a header only.
         this.http = new ProviderHttp({
             baseUrl: options.baseUrl,
-            apiKey: options.apiKey,
-            headers: { 'anthropic-version': '2023-06-01', ...options.headers },
+            headers: {
+                'anthropic-version': '2023-06-01',
+                ...(options.apiKey ? { 'x-api-key': options.apiKey } : {}),
+                ...options.headers,
+            },
             timeoutMs: options.timeoutMs,
         });
     }
@@ -107,8 +113,31 @@ export class AnthropicProvider {
             message: { role: 'assistant', content: text },
         };
     }
-    listModels() {
-        return Promise.resolve([]);
+    /**
+     * Advisory catalogue from `GET /v1/models`, used by `lc init` and
+     * `lc models list --remote` to show what this key can actually reach.
+     * Failures are the caller's to handle: config is the source of truth.
+     */
+    async listModels() {
+        const data = (await this.http.getJson('/models?limit=100'));
+        return (data.data ?? [])
+            .filter((model) => typeof model.id === 'string')
+            .map((model) => ({
+            id: model.id,
+            provider: this.name,
+            label: model.display_name ?? model.id,
+            context_limit: 200_000,
+            max_output: 8_192,
+            capabilities: {
+                streaming: true,
+                tool_calling: true,
+                embeddings: false,
+                vision: true,
+                json_mode: true,
+                reasoning: true,
+                exact_usage: true,
+            },
+        }));
     }
 }
 function splitSystem(messages) {

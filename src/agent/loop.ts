@@ -497,6 +497,7 @@ export class Agent {
       model: model.id,
       provider: model.provider,
       toolNames: registry.list().map((tool) => tool.name),
+      contextLimit: model.context_limit,
       ...(this.o.taskState === undefined ? {} : { taskState: this.o.taskState }),
       ...(indexSummary === undefined ? {} : { indexSummary }),
       memoryCount,

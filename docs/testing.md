@@ -7,7 +7,7 @@ npm run bench     # 33 benchmark checks over the real subsystems
 npm run typecheck # tsc --noEmit
 ```
 
-Current status: **71 tests pass, 33 benchmark checks pass.**
+Current status: **78 tests pass, 33 benchmark checks pass.**
 
 ## Test layout
 

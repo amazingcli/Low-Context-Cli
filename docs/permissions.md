@@ -54,6 +54,32 @@ lc permissions deny  "run_command:*sudo*"
 lc permissions reset
 ```
 
+## Session bypass — `/nopermission`
+
+Inside an interactive session, `/nopermission` turns confirmations off for the
+rest of that session. Use it when you are working in your own repository and the
+approval prompts are interrupting real work:
+
+```
+project› /nopermission
+! Permission bypass ON. File writes and commands run without asking, for this session only.
+  Still blocked: deny rules, and catastrophic commands (rm -rf /, fork bombs, curl|sh, force push).
+
+project› /nopermission off      # turn it back on
+```
+
+What bypass does **not** change, on purpose:
+
+| Still enforced | Why |
+| --- | --- |
+| `deny` rules | they are your explicit instructions, not defaults |
+| catastrophic command patterns | `rm -rf /`, fork bombs, `curl … \| sh`, `git push --force`, `DROP DATABASE` — a bypass that allowed these would be a bug, not a convenience |
+| path containment | writes still cannot escape the project root unless `allow_outside_project` is set |
+
+The bypass is session-scoped and never persisted: restarting `lc` returns you to
+`permissions.mode`. `/permissions` always shows the current state, and the banner
+shows a warning row while it is on.
+
 ## Terminal execution
 
 `run_command` is the highest-risk tool, so it gets the most machinery:

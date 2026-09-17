@@ -43,6 +43,19 @@ If `lc providers test` says the credential is missing, check the variable name i
 Codes: `PROVIDER_AUTH`, `PROVIDER_HTTP`, `PROVIDER_TIMEOUT`. See
 [providers.md](providers.md).
 
+### "Expected OAuth 2 access token" (Google) or a 401 from Anthropic
+
+The key is fine — the header is wrong. Each API requires its own auth header
+(`Authorization: Bearer` for OpenAI-compatible, `x-api-key` for Anthropic,
+`x-goog-api-key` for Gemini), and a mismatched one is rejected with `401` even
+when the key is valid. Current builds send the right header per provider kind, so
+if you see this, check what kind the endpoint is configured as:
+
+- routing an Anthropic or Gemini model through a proxy? configure the proxy as
+  `custom` (OpenAI-compatible) if it speaks that dialect;
+- a hand-written entry with wrong `kind` will show it in `lc providers list`;
+- `lc providers test <id>` reports which header and URL were used.
+
 ## Provider times out or errors repeatedly
 
 ```bash

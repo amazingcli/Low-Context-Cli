@@ -45,6 +45,38 @@ export class ProviderHttp {
         }
         return response.json().catch(() => ({}));
     }
+    /** Plain authenticated GET, used for advisory endpoints such as `/models`. */
+    async getJson(path, extraHeaders, signal) {
+        const url = `${this.options.baseUrl.replace(/\/$/, '')}${path}`;
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+        const onOuterAbort = () => controller.abort();
+        signal?.addEventListener('abort', onOuterAbort, { once: true });
+        let response;
+        try {
+            response = await fetch(url, {
+                method: 'GET',
+                headers: {
+                    ...(this.options.apiKey ? { authorization: `Bearer ${this.options.apiKey}` } : {}),
+                    ...this.options.headers,
+                    ...extraHeaders,
+                },
+                signal: controller.signal,
+            });
+        }
+        catch (error) {
+            throw this.mapFetchError(error, signal?.aborted);
+        }
+        finally {
+            clearTimeout(timer);
+            signal?.removeEventListener('abort', onOuterAbort);
+        }
+        if (!response.ok) {
+            const detail = await response.text().catch(() => '');
+            throw mapHttpError(response.status, detail);
+        }
+        return response.json().catch(() => ({}));
+    }
     async streamPost(path, body, extraHeaders, signal) {
         const url = `${this.options.baseUrl.replace(/\/$/, '')}${path}`;
         try {

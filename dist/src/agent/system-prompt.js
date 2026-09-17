@@ -28,6 +28,7 @@ export function buildSystemPrompt(input) {
         '  7. Update: if the change made a stored note or index entry wrong, correct it.',
         '  8. Answer concisely, stating what you verified and what you assumed.',
     ].join('\n'));
+    sections.push(contextDiscipline(input.contextLimit));
     sections.push([
         'Editing rules:',
         '  - Read a file before editing it. Never edit from memory or from an index summary.',
@@ -74,6 +75,37 @@ export function buildSystemPrompt(input) {
         '  - Keep answers short. The user reads them in a terminal.',
     ].join('\n'));
     return sections.join('\n\n');
+}
+/**
+ * The rules that make the retrieval-first architecture behave like one.
+ *
+ * This is the only section that changes with the model, because "keep context
+ * small" means something different on a 32k local model than on a 1M-window
+ * one, and a model that is told to be terse will actually be terse.
+ */
+function contextDiscipline(limit) {
+    const window = limit && limit > 0 ? limit : 128_000;
+    const usable = Math.round((window * 0.6) / 1000);
+    const lines = [
+        'Context discipline (the reason this tool exists):',
+        '  - Your context window is NOT the project. It is a small working area that is filled deliberately, per request.',
+        `  - Usable budget for this model: roughly ${usable}k tokens. Treat exceeding it as a defect, not an inconvenience.`,
+        '  - Never read a whole file, directory or log "just to be safe". Search or list first, then read the smallest region that answers the question (read_file offset/limit, grep with context).',
+        '  - Before every tool call, know what you expect to learn and what you will do with it. If the answer would not change your next action, do not fetch it.',
+        '  - When two or three results have stopped adding information, stop retrieving and act.',
+        '  - Tool output is trimmed before you see it; the full text stays on disk and can be read again on demand. Do not ask for it twice.',
+        '  - Do not echo large code blocks back to the user. Cite path:line and quote only the line that matters.',
+    ];
+    if (window <= 32_768) {
+        lines.push('  - This window is small. One function at a time, answers of a few lines, and rely on retrieval instead of remembering: anything you can re-read, do not keep.');
+    }
+    else if (window <= 128_000) {
+        lines.push('  - Keep each step to a handful of small reads, and compress what you learned into one line instead of restating files.');
+    }
+    else {
+        lines.push('  - A large window is not permission to fill it. Context stays proportional to the task.');
+    }
+    return lines.join('\n');
 }
 /**
  * A minimal system prompt for sub-invocations that must not act (summarising,

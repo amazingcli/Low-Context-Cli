@@ -1,5 +1,5 @@
 import { ProviderHttp } from './http.js';
-import { parseSse, stopReasonOf } from './types.js';
+import { parseSse, stopReasonOf, guessContextLimit } from './types.js';
 export class OpenAIProvider {
     name;
     kind = 'openai-compatible';
@@ -105,9 +105,33 @@ export class OpenAIProvider {
             yield { type: 'done', stop_reason: 'end_turn', message: { role: 'assistant', content: contentAccum } };
         }
     }
-    listModels() {
-        // Catalog comes from config; the HTTP `/models` endpoint is advisory.
-        return Promise.resolve([]);
+    /**
+     * Advisory catalogue from `GET /models`. Works for OpenAI and for every
+     * OpenAI-compatible server (Ollama, LM Studio, vLLM, gateways), which makes
+     * `lc init` able to show the models a key or local server really offers.
+     */
+    async listModels() {
+        const data = (await this.http.getJson('/models'));
+        const entries = data.data ?? data.models ?? [];
+        return entries
+            .map((entry) => ({ id: entry.id ?? entry.name, context: entry.context_length }))
+            .filter((entry) => typeof entry.id === 'string' && entry.id !== '')
+            .map((entry) => ({
+            id: entry.id,
+            provider: this.name,
+            label: entry.id,
+            context_limit: entry.context ?? guessContextLimit(entry.id),
+            max_output: 8_192,
+            capabilities: {
+                streaming: true,
+                tool_calling: true,
+                embeddings: false,
+                vision: true,
+                json_mode: true,
+                reasoning: /\b(o[1-9]|reason|think|r1)\b/i.test(entry.id),
+                exact_usage: true,
+            },
+        }));
     }
     usageOf(raw) {
         if (!raw || typeof raw !== 'object')

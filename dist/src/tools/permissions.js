@@ -111,10 +111,25 @@ export class PermissionEngine {
     denyRules;
     /** Resources approved during this run, so the user is asked once per thing. */
     sessionApprovals = new Set();
+    /**
+     * Session-scoped bypass (§20), toggled by the explicit `/nopermission`
+     * slash command. It removes confirmations and mode limits so a trusted user
+     * is not interrupted mid-task. Two things still apply, on purpose: deny
+     * rules, and the always-refused catastrophic command patterns. A bypass that
+     * silently allowed `rm -rf /` would be a bug, not a convenience.
+     */
+    bypass = false;
     constructor(policy) {
         this.policy = policy;
         this.allowRules = policy.allow.map(compileRule);
         this.denyRules = policy.deny.filter((r) => !r.startsWith('!')).map(compileRule);
+    }
+    /** Turn confirmations off (or back on) for the rest of the session. */
+    setBypass(on) {
+        this.bypass = on;
+    }
+    get bypassing() {
+        return this.bypass;
     }
     /** Remember an approval so the same resource is not re-prompted. */
     approve(subject) {
@@ -149,6 +164,12 @@ export class PermissionEngine {
         }
         if (this.sessionApprovals.has(request.subject)) {
             return { allowed: true, needs_confirmation: false, reason: 'approved earlier in this session', prompt: false };
+        }
+        // Bypass sits after deny rules and the catastrophic check, before the mode
+        // switch: nothing dangerous becomes reachable just because the user turned
+        // prompts off.
+        if (this.bypass) {
+            return { allowed: true, needs_confirmation: false, reason: 'permission bypass is on', prompt: false };
         }
         switch (this.policy.mode) {
             case 'trusted':

@@ -90,6 +90,11 @@ lc init                          # pick a provider and model
 lc "where is authentication handled and how does it time out?"
 ```
 
+The wizard asks for a provider, a model and a permission mode. Every provider —
+hosted or local — also accepts a model ID you **paste by hand** or **fetch live**
+from the provider's `/models` endpoint, so a gateway or a brand-new model name
+needs no code change. See [providers.md](docs/providers.md).
+
 `lc init` configures a provider. Any of these work:
 
 | Provider | Kind | Credential |
@@ -107,7 +112,7 @@ More:
 lc analyze                       # map the project and summarise the architecture
 lc index                         # build or refresh the project index
 lc "fix the receipt parser"      # one-shot request
-lc                               # interactive session (type /help inside)
+lc                               # interactive session (type / for the menu)
 lc context show                  # what would be sent to the model, and why
 lc memory search "auth decision" # retrieve a past decision, with its source
 lc memory show mem_…             # the record *and* the conversation it came from
@@ -191,6 +196,27 @@ CONFIGURATION
   doctor                        diagnose the whole installation
 ```
 
+### Inside a session
+
+Typing `/` opens a live, filtered command menu — arrows move, `Tab` completes,
+`Enter` runs — so nothing has to be memorised:
+
+```
+project› /mod
+  ─── model
+ › /model                    show the active model
+   /models                   list models and switch
+   /nopermission             bypass permission prompts for this session (toggle)
+   /permissions              show permission mode and rules
+  ↑↓ move · Enter run · Tab complete · Esc close · type to filter
+```
+
+`/models 3` or `/model gpt-4o` switches model mid-session; `/history`, `/search`,
+`/sessions` and `/resume` work against the on-disk history; `/nopermission`
+toggles the session bypass; `/verbose`, `/debug` and `/quiet` change how much the
+agent shows you. Deny rules and catastrophic commands stay blocked even with the
+bypass on.
+
 Common options:
 
 ```
@@ -258,7 +284,7 @@ Full detail, including layer-by-layer data flow: **[docs/architecture.md](docs/a
 
 ```bash
 npm run typecheck    # tsc --noEmit
-npm test             # build + node:test  (71 tests)
+npm test             # build + node:test  (78 tests)
 npm run bench        # 33 benchmark checks across real subsystems
 npm run dev          # build and run the CLI
 ```

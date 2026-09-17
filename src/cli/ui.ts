@@ -43,13 +43,15 @@ export type ColorName = keyof typeof CODES;
 
 export class Ui {
   private readonly enabled: boolean;
+  private readonly options: UiOptions;
   private spinnerTimer: NodeJS.Timeout | undefined;
   private spinnerFrame = 0;
   private spinnerText = '';
   private readonly spinnerFrames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
   private streaming = false;
 
-  constructor(private readonly options: UiOptions) {
+  constructor(options: UiOptions) {
+    this.options = options;
     this.enabled =
       options.color === 'always' || (options.color === 'auto' && stdout.isTTY === true && process.env.NO_COLOR === undefined);
   }
@@ -68,6 +70,19 @@ export class Ui {
 
   get verbose(): boolean {
     return this.options.responseMode === 'verbose' || this.debug;
+  }
+
+  get responseMode(): ResponseMode {
+    return this.options.responseMode;
+  }
+
+  /**
+   * Switch verbosity mid-session (`/verbose`, `/debug`, `/quiet`). The UI is
+   * constructed once per process, so the mode has to be mutable for the slash
+   * commands to mean anything.
+   */
+  setResponseMode(mode: ResponseMode): void {
+    this.options.responseMode = mode;
   }
 
   color(name: ColorName, text: string): string {
