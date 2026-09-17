@@ -79,6 +79,29 @@ node bin/low-context.js --help
 `--offline`), builds, and links the CLI. It does not modify anything outside the
 project directory or your npm global prefix.
 
+## Updating
+
+An update is the same install command — there is nothing to uninstall first:
+
+```bash
+npm install -g github:amazingcli/Low-Context-Cli
+lc version
+```
+
+If that ever fails with `ENOTEMPTY` or `EACCES` (see
+[troubleshooting.md](troubleshooting.md#npm-errors-while-reinstalling-globally)),
+install into a directory you own instead and update in place — no `sudo`, so no
+root-owned leftovers can block it:
+
+```bash
+mkdir -p ~/.local/share/low-context && cd ~/.local/share/low-context
+npm init -y >/dev/null && npm install github:amazingcli/Low-Context-Cli
+ln -sfn "$PWD/node_modules/low-context/bin/low-context.js" ~/.local/bin/lc
+```
+
+To update from then on, repeat the two middle lines (`npm install` + `ln -sfn`)
+from that directory.
+
 ## Verify
 
 ```bash
