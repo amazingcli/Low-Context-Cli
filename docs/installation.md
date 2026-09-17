@@ -18,7 +18,40 @@ transitive package changed.
 npm install -g github:amazingcli/Low-Context-Cli
 ```
 
-npm clones the repository and runs the build automatically (`prepare` script).
+`dist/` is committed, so an install from GitHub does not need a compiler: the
+`prepare` script only builds when the prebuilt output is missing.
+
+> The same install is available without `sudo` by pointing npm at a prefix you
+ow:
+>
+> ```bash
+> npm config set prefix ~/.local
+> npm install -g github:amazingcli/Low-Context-Cli
+> export PATH="$HOME/.local/bin:$PATH"    # add to ~/.bashrc to keep it
+> ```
+>
+> A user-owned prefix avoids every permission problem described in
+> [troubleshooting.md](troubleshooting.md#npm-errors-while-reinstalling-globally).
+
+### Reinstalling over an existing global copy
+
+npm replaces a global package by renaming the old directory out of the way
+first. If an earlier attempt was interrupted, that leftover blocks the rename:
+
+```
+npm ERR! code ENOTEMPTY
+npm ERR! rename '/usr/local/lib/node_modules/low-context' ->
+         '/usr/local/lib/node_modules/.low-context-aXn5MVcP'
+```
+
+The install is then left half-removed and `lc: command not found` follows. Clear
+both directories and install again:
+
+```bash
+sudo rm -rf /usr/local/lib/node_modules/low-context /usr/local/lib/node_modules/.low-context-*
+sudo npm install -g github:amazingcli/Low-Context-Cli
+lc version
+```
 
 ## Install from source
 

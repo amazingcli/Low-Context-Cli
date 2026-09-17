@@ -13,6 +13,47 @@ command that fixes it.
 
 ---
 
+## npm errors while reinstalling globally
+
+### `EACCES: permission denied`
+
+`/usr/local/lib/node_modules` is root-owned, so a global install needs `sudo`.
+Better: use a prefix you own and stop needing it at all.
+
+```bash
+npm config set prefix ~/.local
+export PATH="$HOME/.local/bin:$PATH"    # add to ~/.bashrc
+npm install -g github:amazingcli/Low-Context-Cli
+```
+
+### `ENOTEMPTY: directory not empty, rename … .low-context-XXXX`
+
+npm replaces a global package by renaming the old directory aside first. An
+interrupted install leaves that half-renamed directory behind, and every later
+install fails the same way — sometimes after having already moved the working
+copy, which is why `lc` then reports `command not found`.
+
+```bash
+sudo rm -rf /usr/local/lib/node_modules/low-context /usr/local/lib/node_modules/.low-context-*
+sudo npm install -g github:amazingcli/Low-Context-Cli
+lc version
+```
+
+### `uv_cwd: no such file or directory`
+
+The shell is sitting in a directory that was deleted (usually a temporary clone).
+Nothing is wrong with the CLI: `cd ~` — or open a new terminal — and run the
+command again.
+
+### `github.com/owner/repo` is treated as a local path
+
+npm's GitHub shorthand needs a colon, and `github.com` needs to be dropped:
+
+```bash
+npm install -g github:amazingcli/Low-Context-Cli    # correct
+npm install -g github.com/amazingcli/…              # ENOENT: looks for a folder
+```
+
 ## "no active provider" / "no model selected"
 
 `lc doctor` reports these on a fresh install. They are configuration states, not
